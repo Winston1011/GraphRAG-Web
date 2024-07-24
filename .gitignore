@@ -1,0 +1,7 @@
+*.txt
+*.pdf
+*.pyc
+.env
+.vscode/
+*.whl
+*.tar.gz

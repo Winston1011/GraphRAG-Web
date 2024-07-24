@@ -3,7 +3,7 @@
   <img src="graph_rag\images\langchain_graph_rag.png" alt="graph-rag" width="500"/>
 </p>
 
-## 先安装图数据库（Docker部署）
+## 先安装图数据库（Docker部署）,也可以选择neo4j cloud版本
 ```
 docker run `
     -p 7474:7474 -p 7687:7687 `
@@ -18,8 +18,7 @@ docker run `
 ```
 
 ## 运行程序
-**Important** - 在graph_rag下新增 .env文件，内容为example为
-
+在graph_rag下新增 .env文件，eg:
 ```
 OPENAI_API_KEY=sk-xxxx
 OPENAI_BASE_URL=https://apis.openai.com/v1

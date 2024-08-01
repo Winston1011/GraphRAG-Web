@@ -4,21 +4,21 @@ Neo4j from unstructured text
 """
 
 import os
+import re
 from dotenv import load_dotenv
 from typing import List
 from langchain.text_splitter import TokenTextSplitter
-from langchain_community.document_loaders import TextLoader,PyPDFLoader,UnstructuredFileLoader
+from langchain_community.document_loaders import TextLoader,PyPDFLoader,UnstructuredFileLoader,BSHTMLLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.graphs import Neo4jGraph
 from langchain_experimental.graph_transformers import LLMGraphTransformer
 from langchain_openai import ChatOpenAI
 from langchain_community.chat_models import ChatOllama
+from bs4 import BeautifulSoup as Soup
+from langchain_community.document_loaders.recursive_url_loader import RecursiveUrlLoader
 
 
 load_dotenv()
-# os.environ["NEO4J_URI"] = os.getenv("NEO4J_URI")
-# os.environ["NEO4J_USERNAME"] = os.getenv("NEO4J_USERNAME")
-# os.environ["NEO4J_PASSWORD"] = os.getenv("NEO4J_PASSWORD")
 
 class GraphBuilder():
     """
@@ -26,12 +26,12 @@ class GraphBuilder():
 
     _extended_summary_
     """
-    def __init__(self, use_llama=False):
+    def __init__(self, graph_model="gpt-3.5-turbo-0125"):
         self.graph = Neo4jGraph(url=os.getenv("NEO4J_URI"), username=os.getenv("NEO4J_USERNAME"), password=os.getenv("NEO4J_PASSWORD"))
-        if use_llama:
+        if graph_model=="llama3":
             self.llm = ChatOllama(base_url=os.getenv("OLLAMA_SERVER"), model=os.getenv("OLLAMA_MODEL"))
         else:
-            self.llm = ChatOpenAI(model="gpt-3.5-turbo-0125", temperature=0)
+            self.llm = ChatOpenAI(model=graph_model, temperature=0)
 
 
     def graph_document_text(self, text_chunks):
@@ -53,6 +53,10 @@ class GraphBuilder():
             baseEntityLabel=True,
             include_source=True
         )
+    
+    def bs4_extractor(self, html: str) -> str:
+        soup = Soup(html, "lxml")
+        return re.sub(r"\n\n+", "\n\n", soup.text).strip()
 
     def graph_text_content(self, paths, chunk_size, chunk_overlap):
         """
@@ -66,30 +70,35 @@ class GraphBuilder():
 
         # 遍历paths
         for path in paths:
-            # 获取文件后缀
-            file_extension = os.path.splitext(path)[1].lower()
-
+            print('------------------start-----------------------\n')
+             # 判断path是以https://或者http://开头的URL
+            if path.startswith("https://") or path.startswith("http://") :
+                # 加载文件
+                loader = RecursiveUrlLoader(url=path, max_depth=2, extractor=self.bs4_extractor)
+                text_docs = loader.load()
+                # 写到临时文件中
+                with open("temp.txt", "w") as f:
+                    f.write(text_docs)
+                f.close()
             # 根据文件后缀选择合适的加载器
-            if file_extension == '.txt':
+            elif os.path.splitext(path)[1].lower() == '.txt':
                 text_docs = TextLoader(path).load()
-                # print(text_docs)
-                # 将原始文本分解成块
-                text_splitter = TokenTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-                text_chunks = text_splitter.split_documents(text_docs[:3])
-                if text_chunks is not None:
-                    print(text_chunks)
-                    # 转换并添加至graph库
-                    self.graph_document_text(text_chunks)
-            elif file_extension == '.pdf':
-                docs = PyPDFLoader(path).load()
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-                docs = text_splitter.split_documents(docs)
-                print(docs)
-                self.graph_document_text(docs)
-
+            elif os.path.splitext(path)[1].lower() == '.pdf':
+                text_docs = PyPDFLoader(path).load()
+            elif os.path.splitext(path)[1].lower() == '.html':
+                text_docs = BSHTMLLoader(path).load()
             else:
-                raise ValueError(f"不支持的文件类型:  {file_extension}")
+                raise ValueError(f"不支持的文件类型:  {os.path.splitext(path)[1].lower()}")
 
+            # 文本分块
+            text_splitter = TokenTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+            text_chunks = text_splitter.split_documents(text_docs)
+            if text_chunks is not None:
+                print(text_chunks)
+                print('------------------split-----------------------\n')
+                # 转换并添加至graph库
+                self.graph_document_text(text_chunks)
+            print('------------------end-----------------------\n')
 
     def index_graph(self):
         """

@@ -21,20 +21,13 @@ load_dotenv()
 # OpenAI & Neo4j 客户端设置
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 os.environ["OPENAI_BASE_URL"] = os.getenv("OPENAI_BASE_URL")
-# os.environ["NEO4J_URI"] = os.getenv("NEO4J_URI")
-# os.environ["NEO4J_USERNAME"] = os.getenv("NEO4J_USERNAME")
-# os.environ["NEO4J_PASSWORD"] = os.getenv("NEO4J_PASSWORD")
 
-
-llm = ChatOpenAI(model="gpt-3.5-turbo-0125", temperature=0)
-
-
-def graph_content(file_paths, progress_bar, status_text, chunk_size, chunk_overlap, use_llama_flag):
+def graph_content(file_paths, progress_bar, status_text, chunk_size, chunk_overlap, graph_model):
     """
     生成新图的入口点。将来会在UI中添加控件以执行这些操作。
     """
     print("开始从文本内容构建知识图谱:")
-    graph_builder = GraphBuilder(use_llama=use_llama_flag)
+    graph_builder = GraphBuilder(graph_model=graph_model)
 
     status_text.text("开始解析&存储")
     progress_bar.progress(1/5)
@@ -54,10 +47,10 @@ def reset_graph():
     """
     重置图，删除所有关系和节点。
     """
-    graph_builder = GraphBuilder(use_llama=False)
+    graph_builder = GraphBuilder()
     graph_builder.reset_graph()
 
-async def response_generator(question: str, model: str):
+async def response_generator(question: str, model: str, embedding_model: str):
     """
     对于给定的问题,将制定搜索查询并使用自定义的GraphRAG检索器从知识图谱中获取相关内容。
 
@@ -78,10 +71,12 @@ async def response_generator(question: str, model: str):
     回答:"""
     prompt = ChatPromptTemplate.from_template(template)
 
+    llm = ChatOpenAI(model=model, temperature=0)
+
     chain = (
         RunnableParallel(
             {
-                "context": lambda x: rag.retriever(search_query),
+                "context": lambda x: rag.retriever(search_query, embedding_model),
                 "question": RunnablePassthrough(),
             }
         )
@@ -127,12 +122,13 @@ def init_ui():
         password = st.text_input("请输入密码:", type="password")
         col1, col2 = st.columns(2)
 
+        intput_url = st.text_input("请输入待提取文本的URL:")
         # 支持多文件上传
-        uploaded_files = st.file_uploader("上传txt/pdf文件:", type=["txt", "pdf"], accept_multiple_files=True)
+        uploaded_files = st.file_uploader("上传txt/pdf/html文件:", type=["txt", "pdf", "html"], accept_multiple_files=True)
         file_paths = []
         if uploaded_files is not None:
             for uploaded_file in uploaded_files:
-                if uploaded_file.size > 50 * 1024:  # 限制文件大小为50KB
+                if uploaded_file.size > 20 * 1024 * 1024:  # 限制文件大小为20MB
                     st.error(f"文件 '{uploaded_file.name}' 超出限制50KB")
                 else:
                     file_path = uploaded_file.name
@@ -142,9 +138,28 @@ def init_ui():
                     st.success(f"File '{file_path}' uploaded successfully!")
 
         # 添加模型选择下拉菜单
-        graph_model = st.selectbox("构建图谱模型:", ["gpt-3.5-turbo-0125", "llama3"])
-        chat_model = st.selectbox("对话模型选择:", ["gpt-3.5-turbo-0125", "gpt-4o"])
-        embedding_model = st.selectbox("Embedding模型选择:", ["text-embedding-3-small", "gpt-3.5-turbo-0125", "nomic-embed-text"])
+        graph_model = st.selectbox("构建图谱模型:", 
+            [
+                "ernie-speed-128k",
+                "gpt-3.5-turbo-0125",
+                "gpt-4o-mini", 
+                "llama3"
+            ]
+        )
+        chat_model = st.selectbox("对话模型选择:", 
+            [
+                "gpt-3.5-turbo-0125",
+                "gpt-4o-mini", 
+                "gpt-4o"
+            ]
+        )
+        embedding_model = st.selectbox("Embedding模型选择:", 
+            [
+                "text-embedding-3-small",
+                "text-embedding-ada-002", 
+                "nomic-embed-text"
+            ]
+        )
 
         # chunk_size
         chunk_size = st.number_input("chunk_size:", min_value=8, max_value=2048, value=512, step=8)
@@ -155,11 +170,12 @@ def init_ui():
        
         passwordFlag = password == "epochdz"
         with col1:
-            if st.button("Populate Graph", disabled=len(file_paths) == 0 or not passwordFlag):
+            if st.button("Populate Graph", disabled=(len(file_paths) == 0 and len(intput_url)==0) or not passwordFlag):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
-                use_llama_flag = graph_model == "llama3"
-                graph_content(file_paths, progress_bar, status_text, chunk_size, chunk_overlap, use_llama_flag)
+                if len(intput_url) > 0 :
+                    file_paths.append(intput_url)
+                graph_content(file_paths, progress_bar, status_text, chunk_size, chunk_overlap, graph_model)
 
         with col2:
             if st.button("Reset Graph", disabled=not passwordFlag):
@@ -182,7 +198,7 @@ def init_ui():
             asyncio.set_event_loop(loop)
 
             async def update_response():
-                async for chunk in response_generator(user_query, chat_model):
+                async for chunk in response_generator(user_query, chat_model, embedding_model):
                     response_parts.append(chunk)
                     response_placeholder.markdown("".join(response_parts))
                 response = "".join(response_parts)

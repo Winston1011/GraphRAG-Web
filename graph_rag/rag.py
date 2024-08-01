@@ -18,7 +18,7 @@ class GraphRAG():
 
     def __init__(self, chat_model="gpt-3.5-turbo-0125"):
         self.graph = Neo4jGraph(url=os.getenv("NEO4J_URI"), username=os.getenv("NEO4J_USERNAME"), password=os.getenv("NEO4J_PASSWORD"))
-        self.llm = ChatOpenAI(model=chat_model, temperature=0.7)
+        self.llm = ChatOpenAI(model=chat_model, temperature=0)
 
     def create_entity_extract_chain(self):
         """
@@ -32,7 +32,7 @@ class GraphRAG():
             [
                 (
                     "system",
-                    "你进行提取文本中出现的所有人物、专业名词、对象、组织或商业实体等",
+                    "你进行提取文本中出现的所有人物、对象、专业名词、组织或商业实体等",
                 ),
                 (
                     "human",
@@ -102,7 +102,7 @@ class GraphRAG():
             result += "\n".join([el['output'] for el in response])
         return result
 
-    def create_vector_index(self) -> Neo4jVector:
+    def create_vector_index(self, embedding_model: str) -> Neo4jVector:
         """
         使用现有graph创建一个向量索引。该向量表示基于指定的属性。
         使用 OpenAIEmbeddings。
@@ -111,7 +111,7 @@ class GraphRAG():
             Neo4jVector: 配置中指定的图节点的向量表示。
         """
         vector_index = Neo4jVector.from_existing_graph(
-            OpenAIEmbeddings(model="text-embedding-3-small"),
+            OpenAIEmbeddings(model=embedding_model),
             search_type="hybrid",
             node_label="Document",
             text_node_properties=["text"],
@@ -119,7 +119,7 @@ class GraphRAG():
         )
         return vector_index
 
-    def retriever(self, question: str) -> str:
+    def retriever(self, question: str, embedding_model: str) -> str:
         """
         图 RAG 检索器，结合结构化和非结构化检索方法，根据用户问题形成单一检索器。
         混合检索：包含向量相似性搜索&结构化图遍历搜索
@@ -132,7 +132,7 @@ class GraphRAG():
         """
         print(f"Search query: {question}")
         # 创建向量索引，执行相似性搜索
-        vector_index = self.create_vector_index()
+        vector_index = self.create_vector_index(embedding_model)
         unstructured_data = [el.page_content for el in vector_index.similarity_search(question)]
         # 检索结构化数据（图遍历搜索）
         structured_data = self.structured_retriever(question)
